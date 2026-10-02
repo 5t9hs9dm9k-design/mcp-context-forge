@@ -13483,7 +13483,7 @@ if _session_view_middleware is not None:
 # First-Party
 try:
     from mcpgateway.boonestack_sessions_ui import router as _boonestack_sessions_router
-    app.include_router(_boonestack_sessions_router, prefix="/admin/boonestack-sessions")
+    app.include_router(_boonestack_sessions_router)
     logger.info("Boonestack Sessions UI mounted at /admin/boonestack-sessions")
 except ImportError as _bsv_exc:
     logger.warning("Boonestack Sessions UI unavailable: %s", _bsv_exc)

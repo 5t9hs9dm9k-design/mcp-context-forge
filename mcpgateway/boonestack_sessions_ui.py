@@ -11,11 +11,8 @@ import html
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-try:
-    # First-Party
-    from mcpgateway.auth import require_permission
-except ImportError:  # pylint: disable=broad-exception-caught
-    from mcpgateway.utils.get_current_user import require_permission  # type: ignore
+# First-Party
+from mcpgateway.middleware.rbac import require_permission
 
 # First-Party
 from mcpgateway.session_tool_views import list_sessions, release_all_views, release_session
@@ -83,14 +80,14 @@ async function releaseAll() {{
 
 
 @router.get("", response_class=HTMLResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission("admin.dashboard", allow_admin_bypass=True)
 async def sessions_page(request: Request) -> HTMLResponse:
     """Live session-view inspector page."""
     return HTMLResponse(_render(list_sessions()))
 
 
 @router.post("/release/{sid}")
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission("admin.dashboard", allow_admin_bypass=True)
 async def release_one(sid: str) -> dict:
     """Release one view session back to baseline."""
     release_session(sid)
@@ -98,7 +95,7 @@ async def release_one(sid: str) -> dict:
 
 
 @router.post("/release-all")
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission("admin.dashboard", allow_admin_bypass=True)
 async def release_all_endpoint() -> dict:
     """Release every view session back to baseline."""
     return {"released": release_all_views()}
