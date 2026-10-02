@@ -15018,21 +15018,18 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
   </body>
 
 <script>
-/* Boonestack: live uptime ticker + Session Views sidebar link */
+/* Boonestack: live uptime ticker + Session Views nav entry (observer-based) */
 (function () {
-  var tries = 0;
-  var timer = setInterval(function () {
-    tries++;
-    var done = 0;
+  var ticked = false;
+  function tickUptime() {
+    if (ticked) return;
     document.querySelectorAll("div.text-blue-100").forEach(function (label) {
-      if (label.textContent.trim() !== "Uptime") return;
+      if (label.textContent.trim() !== "Uptime" || label.dataset.bstkTick) return;
       var val = label.previousElementSibling || (label.parentElement && label.parentElement.querySelector("div"));
       if (!val) return;
       var m = val.textContent.match(/^(?:(\d+)d\s+)?(?:(\d+)h\s+)?(\d+)m(?:\s+(\d+)s)?/);
       if (!m) return;
-      done++;
-      if (val.dataset.boonestackTicker) return;
-      val.dataset.boonestackTicker = "1";
+      label.dataset.bstkTick = "1"; ticked = true;
       var base = (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0));
       setInterval(function () {
         base += 1;
@@ -15040,19 +15037,32 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         val.textContent = (d ? d + "d " : "") + (h ? h + "h " : "") + mi + "m " + s + "s";
       }, 1000);
     });
-    var nav = document.querySelector("aside nav, nav ul, nav");
-    if (nav && !nav.dataset.boonestackLink) {
-      nav.dataset.boonestackLink = "1";
-      var a = document.createElement("a");
-      a.href = "/admin/boonestack-sessions";
-      a.textContent = "▩ Session Views";
-      a.style.cssText = "display:block;padding:8px 16px;color:#e6edf3;text-decoration:none;font-size:0.9rem;";
-      a.onmouseover = function () { a.style.background = "#21262d"; };
-      nav.appendChild(a);
-      done++;
+  }
+  function ensureNav() {
+    var links = document.querySelectorAll("aside a, nav a");
+    var metrics = null, mine = null;
+    links.forEach(function (a) {
+      if (a.dataset.bstkSession) mine = a;
+      if (!metrics && /metrics/i.test(a.textContent || "")) metrics = a;
+    });
+    if (metrics && !mine) {
+      var clone = metrics.cloneNode(true);
+      clone.dataset.bstkSession = "1";
+      clone.href = "/admin/boonestack-sessions";
+      clone.textContent = "Session Views";
+      ["data-tab", "data-section", "data-page"].forEach(function (at) { clone.removeAttribute(at); });
+      if (metrics.parentElement) metrics.parentElement.insertAdjacentElement("afterend", clone);
+      return true;
     }
-    if (done >= 2 || tries > 30) clearInterval(timer);
-  }, 1500);
+    return !!mine;
+  }
+  var obs = new MutationObserver(function () {
+    tickUptime();
+    if (ensureNav()) obs.disconnect();
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("DOMContentLoaded", function () { tickUptime(); ensureNav(); });
+  window.addEventListener("load", function () { tickUptime(); if (ensureNav()) obs.disconnect(); });
 })();
 </script>
 </html>
