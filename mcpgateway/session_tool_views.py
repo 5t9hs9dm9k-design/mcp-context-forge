@@ -102,7 +102,7 @@ def list_sessions() -> list:
     return out
 
 
-async def record_session_summons(params) -> None:
+async def record_session_summons(ctx, params) -> None:
     """Record summoned tool names for the CURRENT request's view session."""
     sid = view_session_var.get()
     if not sid:

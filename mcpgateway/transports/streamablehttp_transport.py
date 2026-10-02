@@ -3343,7 +3343,7 @@ async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
     """
     if settings.session_tool_views:
         from mcpgateway.session_tool_views import record_session_summons
-        await record_session_summons(params)
+        await record_session_summons(ctx, params)
     token = _v2_request_ctx.set(ctx)
     try:
         result = await call_tool(params.name, params.arguments or {})
