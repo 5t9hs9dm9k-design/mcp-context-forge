@@ -51,8 +51,9 @@ def filter_tools(result: dict, sid: str, baseline_prefixes: tuple) -> dict:
     """
     if sid not in _VIEWS:
         return result
-    view = _VIEWS[sid]["summons"]
-    view["last"] = time.time()
+    entry = _VIEWS[sid]
+    entry["last"] = time.time()
+    view = entry["summons"]
     tools = result.get("tools")
     if isinstance(tools, list):
         result["tools"] = [
