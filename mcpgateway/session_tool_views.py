@@ -140,3 +140,23 @@ class SessionViewMiddleware:
         finally:
             if token is not None:
                 view_session_var.reset(token)
+
+def release_session(sid: str) -> None:
+    """Release one view session back to baseline (delete its summons record)."""
+    r = _redis()
+    if r is not None:
+        try:
+            r.delete(_key(sid))
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+    with _LOCK:
+        _VIEWS.pop(sid, None)
+
+
+def release_all_views() -> int:
+    """Release every view session. Returns the count released."""
+    n = 0
+    for s in list_sessions():
+        release_session(str(s.get("session", "")))
+        n += 1
+    return n

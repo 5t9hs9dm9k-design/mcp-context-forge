@@ -13479,6 +13479,14 @@ if settings.session_tool_views:
         logger.warning("Session view middleware unavailable: %s", _exc)
 if _session_view_middleware is not None:
     app.mount("/mcp", app=_session_view_middleware)
+
+# First-Party
+try:
+    from mcpgateway.boonestack_sessions_ui import router as _boonestack_sessions_router
+    app.include_router(_boonestack_sessions_router, prefix="/admin/boonestack-sessions")
+    logger.info("Boonestack Sessions UI mounted at /admin/boonestack-sessions")
+except ImportError as _bsv_exc:
+    logger.warning("Boonestack Sessions UI unavailable: %s", _bsv_exc)
 else:
     app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
