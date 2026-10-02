@@ -3324,6 +3324,14 @@ async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsRe
     token = _v2_request_ctx.set(ctx)
     try:
         tools = await list_tools()
+        if settings.session_tool_views:
+            _rc = getattr(ctx, "request_context", None)
+            _key = getattr(_rc, "session_id", None) if _rc is not None else None
+            if _key:
+                from mcpgateway.session_tool_views import _summons_for
+                _summoned = _summons_for("sess:" + str(_key)) or set()
+                _prefixes = tuple(t.strip() for t in settings.session_view_baseline_prefixes.split(",") if t.strip())
+                tools = [t for t in tools if t.name.startswith(_prefixes) or t.name in _summoned]
         return types.ListToolsResult(tools=tools)
     finally:
         _v2_request_ctx.reset(token)
@@ -3335,6 +3343,18 @@ async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
     v1 call_tool may return ``CallToolResult`` directly, a ``(content, structured)``
     tuple, or a bare content list — handle each shape.
     """
+    if settings.session_tool_views:
+        _summon_tools = tuple(t.strip() for t in settings.session_view_summon_tools.split(",") if t.strip())
+        if params.name in _summon_tools:
+            _rc = getattr(ctx, "request_context", None)
+            _key = getattr(_rc, "session_id", None) if _rc is not None else None
+            if _key:
+                from mcpgateway.session_tool_views import record_summons
+                record_summons(
+                    "sess:" + str(_key),
+                    (params.arguments or {}).get("names") or [],
+                    params.name == _summon_tools[0],
+                )
     token = _v2_request_ctx.set(ctx)
     try:
         result = await call_tool(params.name, params.arguments or {})

@@ -88,14 +88,11 @@ def _summons_for(sid: str):
     if r is not None:
         try:
             raw = r.get(_PREFIX + sid)
-            if raw is None:
-                return None
-            return set(json.loads(raw))
+            return set(json.loads(raw)) if raw else set()
         except Exception:  # pylint: disable=broad-exception-caught
             return None
     with _LOCK:
-        if sid not in _VIEWS:
-            return None
+        _VIEWS.setdefault(sid, {"summons": set(), "last": time.time()})
         _VIEWS[sid]["last"] = time.time()
         return set(_VIEWS[sid]["summons"])
 
@@ -103,12 +100,13 @@ def _summons_for(sid: str):
 def filter_tools(result: dict, sid: str, baseline_prefixes: tuple) -> dict:
     """Filter a tools/list result dict to baseline prefixes + this session's summons.
 
-    Sessions unknown to the registry (sessionless callers, trusted internals)
-    pass through unfiltered.
+    A session id that is known to the platform (echoed from initialize) always
+    gets a filtered view. Only sessionless callers (no id at all - trusted
+    internals) pass through unfiltered.
     """
-    view = _summons_for(sid)
-    if view is None:
+    if not sid:
         return result
+    view = _summons_for(sid) or set()
     tools = result.get("tools")
     if isinstance(tools, list):
         result["tools"] = [
