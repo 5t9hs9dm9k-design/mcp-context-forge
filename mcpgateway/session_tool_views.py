@@ -122,3 +122,14 @@ def filter_tools(result: dict, sid: str, baseline_prefixes: tuple) -> dict:
 def _prune(now: float) -> None:
     for k in [k for k, v in _VIEWS.items() if now - v["last"] > _TTL_SECONDS]:
         _VIEWS.pop(k, None)
+
+def release_session(sid: str) -> None:
+    with _LOCK:
+        _VIEWS.pop(sid, None)
+
+
+def release_all_views() -> int:
+    with _LOCK:
+        n = len(_VIEWS)
+        _VIEWS.clear()
+        return n
