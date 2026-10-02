@@ -78,9 +78,8 @@ def get_view_filter():
         return None
     try:
         raw = r.get(_key(sid))
-        if raw is None:
-            return None
-        return (baseline_prefixes(), set(json.loads(raw)))
+        # unknown view = baseline-only (never the full catalog)
+        return (baseline_prefixes(), set(json.loads(raw) if raw else "[]"))
     except Exception:  # pylint: disable=broad-exception-caught
         return None
 
@@ -107,7 +106,9 @@ async def record_session_summons(ctx, params) -> None:
     sid = view_session_var.get()
     if not sid:
         return
-    store_summons(sid, (params.get("arguments") or {}).get("names") or [], True)
+    args = params.get("arguments") if isinstance(params, dict) else getattr(params, "arguments", None)
+    names = (args or {}).get("names") or [] if isinstance(args, dict) else []
+    store_summons(sid, names, True)
 
 
 class SessionViewMiddleware:
@@ -124,22 +125,14 @@ class SessionViewMiddleware:
             return
         req_headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                        for k, v in scope.get("headers", [])}
-        internal = req_headers.get("x-boonestack-internal") == "1"
-        sid = req_headers.get(_VAR_NAME)
-        minted = False
+        # The SDK session manager mints mcp-session-id on initialize (stateful
+        # mode); clients echo it. Propagate it as the view key.
+        sid = req_headers.get("mcp-session-id")
         token = None
-        if not internal:
-            if not sid:
-                sid = uuid.uuid4().hex
-                minted = True
-                store_summons(sid, [], True)  # register the view (baseline-only)
+        if sid:
             token = view_session_var.set(sid)
 
         async def send_wrapped(message: Message) -> None:
-            if minted and message.get("type") == "http.response.start":
-                h = list(message.get("headers") or [])
-                h.append((_VAR_NAME.encode("latin-1"), sid.encode("latin-1")))
-                message["headers"] = h
             await send(message)
 
         try:
