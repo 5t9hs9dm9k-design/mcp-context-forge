@@ -1,30 +1,32 @@
-"""Per-session tool views for ContextForge.
+"""Per-session tool views for ContextForge (stateless, multi-worker safe).
 
-When enabled (settings.session_tool_views), each MCP client session gets an
-isolated tool view: tools/list serves only the configured baseline prefixes
-plus the tools that session has explicitly summoned. Summon/release state is
-keyed by the mcp-session-id the platform mints on initialize and expires with
-the session (TTL prune).
+A lightweight ASGI middleware mints a view-session id on the first request
+that lacks one, returns it as a response header, and expects MCP clients to
+echo it on subsequent requests (streamable-http clients echo mcp-session-id).
+The echoed id keys a redis-backed summons registry: the tools a session has
+explicitly summoned via the librarian.
 
-State store: redis when CACHE_TYPE=redis and REDIS_URL are configured (shared
-across gunicorn workers), otherwise in-process memory (single-worker use).
-This module holds no global state mutation: federation stays as-is, and the
-filter is applied at the tools/list dispatch boundary.
+tools/list is filtered per session to: configured baseline prefixes + that
+session's summons. Everything else stays stateless: no USE_STATEFUL_SESSIONS,
+no global tool state changes, invocation unfiltered. Sessionless internal
+callers get a fresh baseline-only view per request, which is why trusted
+internals that need the full catalog bypass via the internal marker header.
 """
+import contextvars
 import json
 import os
-import time
 import uuid
-from threading import Lock
 
-_VIEWS: dict = {}
-_LOCK = Lock()
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+_VAR_NAME = "mcp-session-view"
 _TTL_SECONDS = 24 * 3600
-_PREFIX = "session_tool_views:"
+_KEY_PREFIX = "session_tool_views:"
+
+view_session_var: contextvars.ContextVar = contextvars.ContextVar("session_tool_views_id", default=None)
 
 
 def _redis():
-    """Return a redis client when the redis store is configured, else None."""
     if os.environ.get("CACHE_TYPE", "").lower() != "redis":
         return None
     url = os.environ.get("REDIS_URL")
@@ -37,86 +39,103 @@ def _redis():
         return None
 
 
-def mint_session() -> str:
-    """Mint a fresh view session id and register it."""
-    sid = uuid.uuid4().hex
+def _key(sid: str) -> str:
+    return _KEY_PREFIX + sid
+
+
+def store_summons(sid: str, names: list, active: bool) -> None:
+    """Add/remove tool names in a view session's summons set (redis, TTL'd)."""
     r = _redis()
-    if r is not None:
-        try:
-            r.set(_PREFIX + sid, json.dumps([]), ex=_TTL_SECONDS)
-            return sid
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-    now = time.time()
-    with _LOCK:
-        _prune(now)
-        _VIEWS[sid] = {"summons": set(), "last": now}
-    return sid
-
-
-def record_summons(sid: str, names: list, active: bool) -> None:
-    """Add (active=True) or remove (active=False) tool names from a session's view."""
-    if not sid:
+    if r is None:
         return
-    r = _redis()
-    if r is not None:
-        try:
-            key = _PREFIX + sid
-            current = json.loads(r.get(key) or "[]")
-            if active:
-                current.extend(n for n in names if n and n not in current)
-            else:
-                current = [n for n in current if n not in names]
-            r.set(key, json.dumps(current), ex=_TTL_SECONDS)
-            return
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-    now = time.time()
-    with _LOCK:
-        _prune(now)
-        view = _VIEWS.setdefault(sid, {"summons": set(), "last": now})
-        view["last"] = now
+    try:
+        current = json.loads(r.get(_key(sid)) or "[]")
         if active:
-            view["summons"].update(n for n in names if n)
+            current.extend(n for n in names if n and n not in current)
         else:
-            view["summons"].difference_update(n for n in names if n)
+            current = [n for n in current if n not in names]
+        r.set(_key(sid), json.dumps(current), ex=_TTL_SECONDS)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
 
 
-def _summons_for(sid: str):
-    """Return the session's summons set, or None when the session is unknown."""
-    r = _redis()
-    if r is not None:
-        try:
-            raw = r.get(_PREFIX + sid)
-            return set(json.loads(raw)) if raw else set()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return None
-    with _LOCK:
-        _VIEWS.setdefault(sid, {"summons": set(), "last": time.time()})
-        _VIEWS[sid]["last"] = time.time()
-        return set(_VIEWS[sid]["summons"])
+def baseline_prefixes() -> tuple:
+    try:
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+        return tuple(p.strip() for p in settings.session_view_baseline_prefixes.split(",") if p.strip())
+    except Exception:  # pylint: disable=broad-exception-caught
+        return ()
 
 
-def filter_tools(result: dict, sid: str, baseline_prefixes: tuple) -> dict:
-    """Filter a tools/list result dict to baseline prefixes + this session's summons.
-
-    A session id that is known to the platform (echoed from initialize) always
-    gets a filtered view. Only sessionless callers (no id at all - trusted
-    internals) pass through unfiltered.
-    """
+def get_view_filter():
+    """(prefixes, summoned_set) for the current request's view, or None when the
+    request carries no view session (trusted internals bypassing the middleware)."""
+    sid = view_session_var.get()
     if not sid:
-        return result
-    view = _summons_for(sid) or set()
-    tools = result.get("tools")
-    if isinstance(tools, list):
-        result["tools"] = [
-            t for t in tools
-            if str(t.get("name", "")).startswith(tuple(baseline_prefixes))
-            or t.get("name") in view
-        ]
-    return result
+        return None
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        raw = r.get(_key(sid))
+        if raw is None:
+            return None
+        return (baseline_prefixes(), set(json.loads(raw)))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
 
 
-def _prune(now: float) -> None:
-    for k in [k for k, v in _VIEWS.items() if now - v["last"] > _TTL_SECONDS]:
-        _VIEWS.pop(k, None)
+def list_sessions() -> list:
+    """All live view sessions (for the admin UI): [{sid, summons, ttl}]."""
+    r = _redis()
+    if r is None:
+        return []
+    out = []
+    try:
+        for k in r.scan_iter(_KEY_PREFIX + "*"):
+            sid = k.decode().split(":", 1)[1]
+            out.append({"session": sid,
+                        "summons": json.loads(r.get(k) or "[]"),
+                        "ttl": r.ttl(k)})
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return out
+
+
+class SessionViewMiddleware:
+    """Mint/echo the view-session id and expose it via a ContextVar for the
+    tools/list filter. Zero global state: the id lives in the client's echo
+    plus a TTL'd redis record."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        req_headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                       for k, v in scope.get("headers", [])}
+        internal = req_headers.get("x-boonestack-internal") == "1"
+        sid = req_headers.get(_VAR_NAME)
+        minted = False
+        token = None
+        if not internal:
+            if not sid:
+                sid = uuid.uuid4().hex
+                minted = True
+                store_summons(sid, [], True)  # register the view (baseline-only)
+            token = view_session_var.set(sid)
+
+        async def send_wrapped(message: Message) -> None:
+            if minted and message.get("type") == "http.response.start":
+                h = list(message.get("headers") or [])
+                h.append((_VAR_NAME.encode("latin-1"), sid.encode("latin-1")))
+                message["headers"] = h
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapped)
+        finally:
+            if token is not None:
+                view_session_var.reset(token)
