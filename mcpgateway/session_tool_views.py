@@ -102,6 +102,14 @@ def list_sessions() -> list:
     return out
 
 
+async def record_session_summons(params) -> None:
+    """Record summoned tool names for the CURRENT request's view session."""
+    sid = view_session_var.get()
+    if not sid:
+        return
+    store_summons(sid, (params.get("arguments") or {}).get("names") or [], True)
+
+
 class SessionViewMiddleware:
     """Mint/echo the view-session id and expose it via a ContextVar for the
     tools/list filter. Zero global state: the id lives in the client's echo
