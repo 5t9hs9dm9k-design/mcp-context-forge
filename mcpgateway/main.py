@@ -13557,7 +13557,18 @@ internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_ht
 # rust-public). The /_internal/mcp/transport bridge is mounted separately — it
 # receives only trusted Rust-sidecar traffic and must not run the browser Origin/Host
 # gate.
-app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
+_session_view_middleware = None
+if settings.session_tool_views:
+    try:
+        # First-Party
+        from mcpgateway.session_tool_views import SessionViewMiddleware as _SessionViewMiddleware
+        _session_view_middleware = _SessionViewMiddleware(MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
+    except Exception as _exc:  # pylint: disable=broad-exception-caught
+        logger.warning("Session view middleware unavailable: %s", _exc)
+if _session_view_middleware is not None:
+    app.mount("/mcp", app=_session_view_middleware)
+else:
+    app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
