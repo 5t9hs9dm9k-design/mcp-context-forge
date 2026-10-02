@@ -98,7 +98,7 @@ from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
-from mcpgateway.session_tool_views import filter_tools, mint_session, record_summons
+from mcpgateway.session_tool_views import SessionViewMiddleware, get_view_filter, record_session_summons, store_summons  # noqa: F401
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
@@ -11562,8 +11562,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 server_id=server_id,
                 mcp_session_id=mcp_session_id,
             )
-            if settings.session_tool_views:
-                request.state.session_view_id = mint_session()
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             result = await _handle_tools_list_rpc(
@@ -11575,9 +11573,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 cursor=cursor,
                 serializer_func=_serialize_mcp_tool_definitions,
             )
-            if settings.session_tool_views and mcp_session_id:
-                baseline = tuple(p.strip() for p in settings.session_view_baseline_prefixes.split(",") if p.strip())
-                result = filter_tools(result, mcp_session_id, baseline)
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             result = await _handle_tools_list_rpc(
