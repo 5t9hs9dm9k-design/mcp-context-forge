@@ -572,6 +572,43 @@ export const createSystemSummaryCard = function (systemData) {
     });
 
     card.appendChild(statsGrid);
+
+    // Boonestack: live uptime ticker (server value ticks client-side each second)
+    const uptimeIdx = systemStats.findIndex((s2) => s2.key === "uptime");
+    if (uptimeIdx !== -1) {
+      const uKey = systemStats[uptimeIdx].key;
+      const uKeySnake = uKey.replace(/([A-Z])/g, "_$1").toLowerCase();
+      const uptimeVal = String(systemData[uKey] ?? systemData[uKeySnake] ?? "");
+      if (/\d/.test(uptimeVal)) {
+        const base = uptimeVal.split(/\s+/).reduce((acc, part) => {
+          const n = parseFloat(part);
+          if (isNaN(n)) return acc;
+          if (part.endsWith("d")) return acc + n * 86400;
+          if (part.endsWith("h")) return acc + n * 3600;
+          if (part.endsWith("m")) return acc + n * 60;
+          if (part.endsWith("s")) return acc + n;
+          return acc;
+        }, 0);
+        const start = Date.now();
+        const fmt = (t) => {
+          const d = Math.floor(t / 86400), h = Math.floor((t % 86400) / 3600),
+                m = Math.floor((t % 3600) / 60), sec = Math.floor(t % 60);
+          return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m " + sec + "s";
+        };
+        const t0 = start;
+        setInterval(() => {
+          const cell = statsGrid.children[uptimeIdx]?.querySelector("div");
+          if (cell) cell.textContent = fmt(base + (Date.now() - t0) / 1000);
+        }, 1000);
+      }
+    }
+    // Boonestack: link to the live Session Views inspector
+    const sessionsLink = document.createElement("a");
+    sessionsLink.href = (window.ROOT_PATH || "") + "/admin/boonestack-sessions";
+    sessionsLink.textContent = "▶ Boonestack Session Views (live)";
+    sessionsLink.className = "inline-block mt-3 text-sm underline text-blue-200 hover:text-blue-100";
+    card.appendChild(sessionsLink);
+
     return card;
   } catch (error) {
     console.error("Error creating system summary card:", error);
