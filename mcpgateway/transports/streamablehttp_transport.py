@@ -3462,6 +3462,12 @@ async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsRe
     token = _v2_request_ctx.set(ctx)
     try:
         tools = await list_tools()
+        if settings.session_tool_views:
+            from mcpgateway.session_tool_views import get_view_filter
+            view = get_view_filter()
+            if view is not None:
+                _prefixes, _summoned = view
+                tools = [t for t in tools if t.name.startswith(_prefixes) or t.name in _summoned]
         return types.ListToolsResult(tools=tools)
     finally:
         _v2_request_ctx.reset(token)
@@ -3475,6 +3481,9 @@ async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
     """
     token = _v2_request_ctx.set(ctx)
     try:
+        if settings.session_tool_views:
+            from mcpgateway.session_tool_views import record_session_summons
+            await record_session_summons(ctx, params)
         result = await call_tool(params.name, params.arguments or {})
         if isinstance(result, types.InputRequiredResult):
             return result
